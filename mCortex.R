@@ -1,16 +1,43 @@
 rm(list=ls())
-source("https://bioconductor.org/biocLite.R")
+
+
+##source("https://bioconductor.org/biocLite.R")
 #command to load the ChIPseeker and gplots packages
 library(ChIPseeker)
 library(gplots)
+library(foreach)
+library(doMC)
+registerDoMC(4)
+
 #command to load TxDb.Mmusculus.UCSC.mm9.knownGene and to give it a name (txdb), txdb class is a container for storing transcript annotations
 library(TxDb.Mmusculus.UCSC.mm9.knownGene)
+
+args = commandArgs(trailingOnly=TRUE)
+
+#set the number of the random points
+NRANDOM <- 100000
+chrinfo <- read.table("chrinfo.txt", row.names = 1)
+pathregions <- "/home/elias/hic/hic/cortex/combined/"
+fileregions <- paste(pathregions, "total.combined.domain", sep="")
+filelistPath <- "/home/elias/hic/hic/narrowPeakFiles/"
+
+
+if( length(args) > 0 ){
+    NRANDOM <- as.numeric(args[1])
+}
+
+if( length(args) > 1){
+    chrinfo <- args[2]
+}
+
+if( length(args) > 2 ){
+    fileregions <- args[3]
+}
+
+raw.dataset=read.table(fileregions, na.strings="null")
+
 txdb=TxDb.Mmusculus.UCSC.mm9.knownGene
 #setwd("/home/eliasprim/Desktop/HiC Analysis/Pavlidis Rotation/Project/TADs and Inter-TADs RStudio Datasets/Mouse/Cortex")
-
-#read tables chrinfo.txt and mCortex total.combined.domain
-chrinfo <- read.table("chrinfo.txt", row.names = 1)
-raw.dataset=read.table("mCortex total.combined.domain", na.strings="null")
 
 #chromosome names column=as characters 
 TADchrs <- as.character(unique(raw.dataset[,1]))
@@ -18,9 +45,6 @@ chrs <- TADchrs
 
 #all data in a list
 allData <- list()
-
-#set the number of the random points
-NRANDOM <- 100000
 
 #loop for the chromosome analysis below (tadStarts, tadEnds, tadLength, interTAD, interTADcenter)
 for( i in 1:length(chrs))
@@ -53,11 +77,8 @@ for( i in 1:length(chrs))
   
   lengthOfChromosome <- chrinfo[chr,]
   chrData$lengthOfChromosome <- lengthOfChromosome
-  
   allData[[chr]] <- chrData
 }
-
-print(allData$chr1$interCenter)
 
 #cumulate data  in a list 
 cumData <- list()
@@ -73,17 +94,22 @@ for(el in names(allData$chr1))
   cumData[[el]] <- tmpar
 }
 
-print(cumData$inter)
-print(cumData$interCenter)
-print(cumData$starts)
-print(cumData$ends)
-print(cumData$length)
+##print(cumData$inter)
+##print(cumData$interCenter)
+##print(cumData$starts)
+##print(cumData$ends)
+##print(cumData$length)
 
-#histogram to visualize the distribution of the length of TADs and the length of interTADs 
+#histogram to visualize the distribution of the length of TADs and the length of interTADs
+
+pdf("tad_intertad_lengths.pdf", height=7, width=14)
+layout(matrix(1:2, nrow=1), heights=1, widths=c(2,2))
 hist(cumData$inter, breaks=100)
 hist(cumData$length, breaks=100)
+dev.off()
 
 #function to find the absolute minimum distance of the points (see below) from the center of the interTADs
+
 minDistance <- function(point, chr)
 {
   distances <- point - allData[[chr]]$interCenter
@@ -94,33 +120,47 @@ minDistance <- function(point, chr)
 minDistanceList <- list()
 
 #loop to find random points in a chromosome (these points have the same distribution) and their minimum distance from the center of the interTAD
-for(chr in chrs)
-{
-  randomPoints <- floor(runif(NRANDOM, min(allData[[chr]]$starts), max(allData[[chr]]$ends)))
-  minDistanceList[[chr]] <- sapply(randomPoints, minDistance, chr)
+temp <- foreach(i=1:length(chrs)) %dopar%{ #for(chr in chrs)
+    chr <- chrs[i]
+    randomPoints <- floor(runif(NRANDOM, min(allData[[chr]]$starts), max(allData[[chr]]$ends)))
+    minDistanceList[[chr]] <- sapply(randomPoints, minDistance, chr)
 }
 
-min(abs(minDistanceList$chrX))
 
 #command to designate the size of the segments on the x axis, the + and the - limit is the +inf and the -inf respectively
-mybreaks <- seq( from = -1000000, to = 1000000, by = 20000)
-mybreaks <- c(-Inf, mybreaks, Inf)
 
 #histogram to visualize the distribution of the random points  
-myhist<-hist(minDistanceList$chr2, breaks=mybreaks, plot=F)
+##myhist<-hist(minDistanceList$chr2)
 
-plot(myhist$mids, myhist$counts, type = 'h', ylim = c(0,20))
+## find the maximum distance (of all minimum) for all chromosomes
+maxDistance <- 0
+for(chr in chrs){
+    temp.max <- max( minDistanceList[[chr]] )
+    if( temp.max > maxDistance){
+        maxDistance <- temp.max
+    }
+}
 
-#mids= the n cell midpoints, counts=n integers; for each cell, the number of x[] inside
-myhist$mids
-myhist$counts
+maxDistance
+
+mybreaks <- seq( from = -maxDistance, to = maxDistance, length.out=100)
+
+pdf("randomPoints_distanceToInterTAD.pdf")
+for(chr in chrs){
+    pr500k <- length(which(abs(minDistanceList[[chr]]) < 500000)) / length(minDistanceList[[chr]])
+    pr1000k <- length(which(abs(minDistanceList[[chr]]) < 1000000)) / length(minDistanceList[[chr]])
+    pr2000k <- length(which(abs(minDistanceList[[chr]]) < 2000000)) / length(minDistanceList[[chr]])
+    myhist<-hist(minDistanceList[[chr]], breaks=mybreaks, plot=F)
+    plot(myhist$mids, myhist$counts, type = 'l', lwd=2, main=chr, xlab="Distance from the center of inter-TAD", ylab="Counts")
+    legend("topright", legend=c(paste("d500k: ", pr500k, sep=""),paste("d1000k: ", pr1000k, sep=""), paste("d2000k: ", pr2000k, sep="") ) )
+}
+dev.off()
 
 #function to find which points are found inside interTADs
 insideinterTAD=function(point, chr)
 {
   ends <- allData[[chr]]$ends[-length(allData[[chr]]$ends)] + allData[[chr]]$inter
   starts <- allData[[chr]]$ends[-length(allData[[chr]]$ends)]
-  
   isinside <- (point <= ends & point >= starts)
   return(sum(isinside))
 }
@@ -134,25 +174,19 @@ for(chr in chrs)
   insideinterTADList[[chr]] = sapply(randomPoints, insideinterTAD, chr)
 }
 
-insideinterTADList
-
 insideinterTADPercentage <- list()
-
 #loop to find the percentage of the random points which are found inside interTADs in each chromosome
 for(chr in chrs)
 {
   insideinterTADPercentage[[chr]]= sum(insideinterTADList[[chr]])/length(insideinterTADList[[chr]])
 }
 
-insideinterTADPercentage
 
 #loop to find the proportion of interTADs in all the chromosomes
 proportionofinterTADs <- list()
 for (chr in chrs)
 {
-  
   sumInter <- sum(allData[[chr]]$inter)
-  
   proportionofinterTADs[[chr]]=sumInter/allData[[chr]]$lengthOfChromosome
 }
 
@@ -165,42 +199,45 @@ for (chr in chrs)
   proportions[[chr]]=c( insideinterTADPercentage[[chr]], proportionofinterTADs[[chr]] )
 }
 
-proportions
 
 #command to unlist the proportions in two rows.
 #the first row has the name of the chromosome and the numbers, 
 #that indicate the part of proportion (1=insideinterTADPercentage and 2=proportionofinterTADs) 
 #The second row has the numerical values of them 
-unlist(proportions)
+#unlist(proportions)
 
 #with the unlist propotions from above you can make a matrix
 #first column=insideinterTADPercentage, second column=proportionofinterTADs
-proportionmatrix=matrix(unlist(proportions), ncol=2, byrow=TRUE)
-proportionmatrix
-
+proportionmatrix=matrix(unlist(proportions), ncol=2, byrow=T)
 #with the unlist propotions from above you can make a matrix
 #first column=insideinterTADPercentage, second column=proportionofinterTADs
 #Then with a command give names to each couple of bars (colnames=columnnames).
 chrNumbers <- c(1:19, "X")
 chrNames<-paste("Chr", chrNumbers, sep="")
-colnames(proportionmatrix) <- chrNames
+row.names(proportionmatrix) <- chrNames
+
 
 #command to make a barplot with two columns for each chromosome
-#the first column=insideinterTADPercentage, second column=proportionofinterTADs 
-barplot(matrix(unlist(proportions), nrow=2, byrow=F), ylim=c(0,0.2), beside=TRUE, main="Proportion of the Random Points Inside the InterTAD Regions", ylab="Proportion", las=2)
+#the first column=insideinterTADPercentage, second column=proportionofinterTADs
+##par(mar=c(6,4,2,1))
+pdf("barplot_comparisonProportionInterTAD_randomPoints.pdf")
+barplot(t(proportionmatrix), ylim=c(0,0.2), beside=T, main="Proportion of the Random Points Inside the InterTAD Regions\nand comparison to the proportion of the random region", ylab="Proportion", las=2)
+dev.off()
 
 #a different command to make the same barplot as above (t=transpose, ncol and byrow=TRUE)
-t(matrix(unlist(proportions), ncol=2, byrow=T))
 
-#you need to install ChIPseeker if you have not installed it yet
 ##biocLite("ChIPseeker")
 
-#name transcription start sites (tss) the following promoter regions
+##name transcription start sites (tss) the following promoter regions
 tss=getPromoters(TxDb=txdb, upstream=0, downstream=1)
+##command to take the start of the ranges, in this case start=end, name it promoter
+promoters <- list()
+##command to take the start of the ranges, in this case start=end, name it promoter
+for( chr in chrs){
+    inds <- which(tss@seqnames == chr)
+    promoters[[chr]] = tss@ranges@start[inds]
+}
 
-#command to take the start of the ranges, in this case start=end, name it promoter
-promoters=tss@ranges@start
-promoters
 
 #function to find the absolute minimum distance of the promoters from the center of the interTADs for all the chromosomes
 mindist=function(promoters, chr)
@@ -214,21 +251,17 @@ mindist=function(promoters, chr)
 mindistList=list()
 for (chr in chrs)
 {
-  promoters
-  mindistList[[chr]]=sapply(promoters, mindist, chr)
+  mindistList[[chr]]=sapply(promoters[[chr]], mindist, chr)
 }
 
-min(abs(mindistList$chrX))
 
 #loop to find the promoters, which are found inside the interTADs for all the chromosomes
 promotersinsideinterTADsList=list()
 for(chr in chrs)
 {
-  promoters 
-  promotersinsideinterTADsList[[chr]] = sapply(promoters, insideinterTAD, chr)
+    promotersinsideinterTADsList[[chr]] = sapply(promoters[[chr]], insideinterTAD, chr)
 } 
 
-promotersinsideinterTADsList
 
 promotersinsideinterTADsPercentage=list()
 #loop to find the percentage of the promoters which are found inside interTADs in each chromosome
@@ -236,8 +269,6 @@ for(chr in chrs)
 {
   promotersinsideinterTADsPercentage[[chr]]=sum(promotersinsideinterTADsList[[chr]])/length(promotersinsideinterTADsList[[chr]])
 }
-
-promotersinsideinterTADsPercentage
 
 #loop to cumulate in proportion the promotersinsideinterTADPercentage and the proportionofinterTADs
 prop=list()
@@ -250,7 +281,6 @@ for (chr in chrs)
 #the first row has the name of the chromosome and the numbers, 
 #that indicate the part of proportion (1=promotersinsideinterTADsPercentage and 2=proportionofinterTADs) 
 #The second row has the numerical values of them 
-unlist(prop)
 
 #with the unlist propotions from above you can make a matrix
 #first column=promotersinsideinterTADPercentage, second column=proportionofinterTADs
@@ -261,17 +291,20 @@ chrNames<-paste("Chr", chrNumbers, sep="")
 colnames(propmatrix) <- chrNames
 
 #command to make two columns for each chromosome
-#the first column=promotersinsideinterTADPercentage, second column=proportionofinterTADs 
-barplot(propmatrix, beside=TRUE, main="Proportion of the TSS Inside the InterTAD Regions", ylab="Proportion", ylim=c(0,0.3), las=2)
+#the first column=promotersinsideinterTADPercentage, second column=proportionofinterTADs
+pdf("barplot_proportionTSSInterTADS_proportionInterTAD.pdf")
+barplot(propmatrix, beside=TRUE, main="Proportion of the TSS Inside the InterTAD Regions\nvs interTAD proportions", ylab="Proportion", ylim=c(0,0.3), las=2)
+legend("topright", legend=c("TSS proportion in interTAD", "interTAD propotion"), col=c("black", "gray"), pch=15)
+dev.off()
 
 #loop to find which random points are found inside interTADs
-randomPointsinsideinterTADs=list()
-for (chr in chrs)
-{
-  randomPointsinsideinterTADs[[chr]]=sum(insideinterTADList[[chr]])
-}
+##randomPointsinsideinterTADs=list()
+##for (chr in chrs)
+##{
+##    randomPointsinsideinterTADs[[chr]]=sum(insideinterTADList[[chr]])
+#}
 
-randomPointsinsideinterTADs
+##randomPointsinsideinterTADs
 
 #loop to find which promoters are found inside interTADs
 promotersinsideinterTADs=list()
@@ -280,204 +313,179 @@ for (chr in chrs)
   promotersinsideinterTADs[[chr]]=sum(promotersinsideinterTADsList[[chr]])
 }
 
-promotersinsideinterTADs
+promotersinsideinterTADs[[chr]]
+
+tssBinomTest <- list()
+## binomial test for TSS in interTADs
+for(chr in chrs){
+    successProb <- sum(allData[[chr]]$inter)/allData[[chr]]$lengthOfChromosome
+    temp.bt <- binom.test(promotersinsideinterTADs[[chr]], n = length(promoters[[chr]]), p = successProb, alternative = "two.sided")
+    sign <- 1
+    if( temp.bt$estimate < temp.bt$null ){
+        sign = -1
+    }
+    tssBinomTest[[chr]] <- -sign * log10(temp.bt$p.value)
+}
+
+col <- rep("red", length(tssBinomTest))
+col[ unlist(tssBinomTest) < 0 ] <- "blue"
+barplot(unlist(tssBinomTest), las=2, col=col, ylab="-log(pvalue[binom.test])", xlab="Chromosomes",  main="Binomial test of TSS locations in interTADS")
+legend("topright", legend=c("More in interTADS than expected", "Less in interTADs than expected"), col=c("red", "blue"), pch=15)
+abline(h = 0)
+
+##promotersinsideinterTADs
 
 #loop to make a matrix for the fisher's test with the promoters which are found inside interTADs, the random points inside the interTADs,
 #the promoters outside the interTADs and the random points outside the interTADs 
-insideinterTADregions=list()
-for (chr in chrs)
-{
-  insideinterTADregions[[chr]]=matrix(c( promotersinsideinterTADs[[chr]], 
-                                         randomPointsinsideinterTADs[[chr]], 
-                                         length(promotersinsideinterTADsList[[chr]]) - promotersinsideinterTADs[[chr]] , 
-                                         length(insideinterTADList[[chr]]) - randomPointsinsideinterTADs[[chr]] ), nrow=2, byrow=FALSE)
-}
+## insideinterTADregions=list()
+## for (chr in chrs)
+## {
+##   insideinterTADregions[[chr]]=matrix(c( promotersinsideinterTADs[[chr]], 
+##                                          randomPointsinsideinterTADs[[chr]], 
+##                                          length(promotersinsideinterTADsList[[chr]]) - promotersinsideinterTADs[[chr]] , 
+##                                          length(insideinterTADList[[chr]]) - randomPointsinsideinterTADs[[chr]] ), nrow=2, byrow=FALSE)
+## }
 
-insideinterTADregions
+## insideinterTADregions
 
 #loop for the results of the fisher's test for each chromosome. 
 #Fisher exact test is a statistical significance test used in the analysis of contingency tables.
-fisher.results=list()
-for( chr in chrs)
-{
-  fisher.results[[chr]] <- fisher.test(insideinterTADregions[[chr]])$p.value
-}
+## fisher.results=list()
+## for( chr in chrs)
+## {
+##   fisher.results[[chr]] <- fisher.test(insideinterTADregions[[chr]])$p.value
+## }
 
-#command to plot the p values of the fisher exact test and to draw a hoizontal line in p=0.05 or log10(5)-2
-plot(log10(unlist(fisher.results)))
-abline(h=log10(5)-2, col="red")
-
-
-
-
-
+## #command to plot the p values of the fisher exact test and to draw a hoizontal line in p=0.05 or log10(5)-2
+## plot(log10(unlist(fisher.results)))
+## abline(h=log10(5)-2, col="red")
 
 
 #loop to find which random points are found inside interTADs
-randomPointsinsideinterTADs=list()
-for (chr in chrs)
-{
-  randomPointsinsideinterTADs[[chr]]=sum(insideinterTADList[[chr]])
-}
+## randomPointsinsideinterTADs=list()
+## for (chr in chrs)
+## {
+##   randomPointsinsideinterTADs[[chr]]=sum(insideinterTADList[[chr]])
+## }
 
-randomPointsinsideinterTADs
+## randomPointsinsideinterTADs
 
 #command to make a list of files in this working directory
-fileList=list.files(path = "~/Desktop/HiC Analysis/narrowPeakFiles")
-fileList
-
-#commands to remove and to create dataset
-rm(dataset)
-exists("dataset")
-
-#set a new working directory
-pathfile<-"/home/eliasprim/Desktop/HiC Analysis/narrowPeakFiles/"
+fileList=list.files(path = filelistPath)
 
 #loop for the analysis of the files in the fileList, with commands that are found inside the loop
 files0<-""
 finalResults=list()
+tfbsBinomTest <- list()
+pdf("barplot_tfbs_vsInterTADProportion.pdf")
 for (files in fileList)
 {
-  dataset <- read.table(paste(pathfile, files, sep=""), header=TRUE, sep="\t")
-  
-  #command to name the chromosomes
-  mychr <- unique(dataset[,1])
-  mychr
-
-  #command to take the names of the chromosomes from the intersect of two sets
-  chrs <- intersect(TADchrs, mychr)
-  chrs
-  
-  #command to limit the dimensions of your dataset
-  datamatrix.1=dataset[, 1:3]
-
-  #command to find the center of the transcription factor binding sites are found inside interTADs and 
-  #a loop to find which center of transcription factor binding sites are found inside interTAD for each chromosome
-  centeroftfbsinsideinterTADsList=list()
-  for (chr in chrs)
-  {
-    ## find the indexes for each chromosome
-    indexForChromosome <- which(dataset[,1] == chr)
-    ## centeroftfbs for each chromosome
-    centeroftfbs=(dataset[indexForChromosome, 2] + dataset[indexForChromosome, 3])/2
-    centeroftfbsinsideinterTADsList[[chr]]=sapply(centeroftfbs, insideinterTAD, chr)
-  }
-  
-  centeroftfbsinsideinterTADsList
-  
-  #loop to find the percentage of the center of the transcription factor binding sites which are found inside interTADs in each chromosome
-  centeroftfbsinsideinterTADsPercentage=list()
-  for(chr in chrs)
-  {
-    centeroftfbsinsideinterTADsPercentage[[chr]]=sum(centeroftfbsinsideinterTADsList[[chr]])/length(centeroftfbsinsideinterTADsList[[chr]])
-  }
-  
-  centeroftfbsinsideinterTADsPercentage
-
-  #loop to cumulate in proportion the centerinsideinterTADPercentage and the proportionofinterTADs
-  proport=list()
-  for (chr in chrs)
-  {
-    proport[[chr]]=c( centeroftfbsinsideinterTADsPercentage[[chr]], proportionofinterTADs[[chr]] )
-  }
-
-  proport
-
-  #command to unlist the proport in two rows.
-  #the first row has the name of the chromosome and the numbers, 
-  #that indicate the part of proportion (1=centeroftfbsinsideinterTADsPercentage and 2=proportionofinterTADs) 
-  #The second row has the numerical values of them 
-  unlist(proport)
-
-  #with the unlist propotions from above you can make a matrix
-  #first column=centreoftfbsinsideinterTADPercentage, second column=proportionofinterTADs
-  #Then with a command give names (numbers) to each couple of bars (colnames=columnnames).
-  proportmatrix=t(matrix(unlist(proport), ncol=2, byrow = TRUE))
-  chrNumbers <- gsub(pattern="chr(.*)", x = chrs, replacement = "\\1")
-  chrNames<-paste("Chr", chrNumbers, sep="")
-  colnames(proportmatrix) <- chrNames
-
-  #command to make two columns for each chromosome
-  #the first column=centreoftfbsinsideinterTADPercentage, second column=proportionofinterTADs 
-  barplot(proportmatrix, beside=TRUE, main="Proportion of the TFBS inside the interTAD regions", ylab="Proportion", ylim=c(0,0.2), las=2)
-
-  #loop to find which centers of the transcription factor binding sites are found inside interTADs
-  centeroftfbsinsideinterTADs=list()
-  for (chr in chrs)
-  {
-    centeroftfbsinsideinterTADs[[chr]]=sum(centeroftfbsinsideinterTADsList[[chr]])
-  }
-
-  centeroftfbsinsideinterTADs
-  
-  #randomPointsinsideinterTADs
-  #loop to make a matrix for the fisher's test with the transcription factor binding sites which are found inside interTADs, the random points inside the interTADs,
-  #the transcription factor binding sites outside the interTADs and the random points outside the interTADs 
-  insideinterTADregions.1=list()
-  for (chr in chrs)
-  {
-    insideinterTADregions.1[[chr]]=matrix(c(centeroftfbsinsideinterTADs[[chr]], 
-                                            randomPointsinsideinterTADs[[chr]], 
-                                            length(centeroftfbsinsideinterTADsList[[chr]]) - centeroftfbsinsideinterTADs[[chr]] , 
-                                            length(insideinterTADList[[chr]]) - randomPointsinsideinterTADs[[chr]] ), nrow=2, byrow=FALSE)
-  }
-   
-  insideinterTADregions.1
-  
-  #loop for the results of the fisher's test for each chromosome. 
-  #Fisher exact test is a statistical significance test used in the analysis of contingency tables.
-  fisher.results.1=list()
-  for( chr in chrs)
-  {
-    fisher.results.1[[chr]]=fisher.test(insideinterTADregions.1[[chr]])$p.value
-  }
-  
-  fisher.results.1
-  
-  #sign is an array for th p values (in log scale), which are greater of less than the expected value (one for each chromosome for each file of the fileList)
-  #sign boost the difference between the p values
-  #offset is a term to be added to a linear predictor, such as in a generalised linear model, with known coefficient 1 rather than an estimated coefficient
-  sign <-array(1,dim=length(chrs))
-  sign
-  
-  offset<-array(40, dim=length(chrs))
-  
-  #loop to calculate the sign array for each chromosome
-  for(i in 1:length(chrs))
-  {
-    chr <- chrs[i]
-    if( insideinterTADregions.1[[chr]][2,1]/sum(insideinterTADregions.1[[chr]][2,]) > insideinterTADregions.1[[chr]][1,1]/sum(insideinterTADregions.1[[chr]][1,]))
-    {
-      sign[i] <- -1
-      offset[i] <- -40
+    ##files <- fileList[1]
+    dataset <- try(read.table(paste(filelistPath, files, sep=""), header=TRUE, sep="\t"))
+    if ( inherits(dataset, 'try-error') ){
+        next
     }
-  }
+    
+    ##command to name the chromosomes
+    mychr <- unique(dataset[,1])
+        
+    ##command to take the names of the chromosomes from the intersect of two sets
+    chrs <- intersect(TADchrs, mychr)
+        
+    ##command to limit the dimensions of your dataset
+    datamatrix.1=dataset[, 1:3]
+
+    ##command to find the center of the transcription factor binding sites are found inside interTADs and 
+    ##a loop to find which center of transcription factor binding sites are found inside interTAD for each chromosome
+    centeroftfbsinsideinterTADsList=list()
+    for (chr in chrs)
+        {
+            ## find the indexes for each chromosome
+            indexForChromosome <- which(dataset[,1] == chr)
+            ## centeroftfbs for each chromosome
+            centeroftfbs=(dataset[indexForChromosome, 2] + dataset[indexForChromosome, 3])/2
+            centeroftfbsinsideinterTADsList[[chr]]=sapply(centeroftfbs, insideinterTAD, chr)
+        }
+    
+    ##loop to find the percentage of the center of the transcription factor binding sites which are found inside interTADs in each chromosome
+    centeroftfbsinsideinterTADsPercentage=list()
+    for(chr in chrs)
+        {
+            centeroftfbsinsideinterTADsPercentage[[chr]]=sum(centeroftfbsinsideinterTADsList[[chr]])/length(centeroftfbsinsideinterTADsList[[chr]])
+        }
   
-  finalResults[[files]]=offset + sign*(-log10(unlist(fisher.results.1)))
+    centeroftfbsinsideinterTADsPercentage
+    
+    ##loop to cumulate in proportion the centerinsideinterTADPercentage and the proportionofinterTADs
+    proport=list()
+    for (chr in chrs)
+        {
+            proport[[chr]]=c( centeroftfbsinsideinterTADsPercentage[[chr]], proportionofinterTADs[[chr]] )
+        }
+    ##command to unlist the proport in two rows.
+    ##the first row has the name of the chromosome and the numbers, 
+    ##that indicate the part of proportion (1=centeroftfbsinsideinterTADsPercentage and 2=proportionofinterTADs) 
+    ##The second row has the numerical values of them 
+    
+    ##with the unlist propotions from above you can make a matrix
+    ##first column=centreoftfbsinsideinterTADPercentage, second column=proportionofinterTADs
+    ##Then with a command give names (numbers) to each couple of bars (colnames=columnnames).
+    proportmatrix=t(matrix(unlist(proport), ncol=2, byrow = TRUE))
+    chrNumbers <- gsub(pattern="chr(.*)", x = chrs, replacement = "\\1")
+    chrNames<-paste("Chr", chrNumbers, sep="")
+    colnames(proportmatrix) <- chrNames
 
+    ##command to make two columns for each chromosome
+    ##the first column=centreoftfbsinsideinterTADPercentage, second column=proportionofinterTADs
+    
+    barplot(proportmatrix, beside=TRUE, main=paste("Proportion of the TFBS inside the interTAD regions\n", files, sep=""), ylab="Proportion", ylim=c(0,0.2), las=2)
+    
+    ##loop to find which centers of the transcription factor binding sites are found inside interTADs
+    centeroftfbsinsideinterTADs=list()
+    for (chr in chrs)
+        {
+            centeroftfbsinsideinterTADs[[chr]]=sum(centeroftfbsinsideinterTADsList[[chr]])
+        }
+
+
+
+    ## binomial test for the tfbs
+    
+    for(chr in chrs){
+        
+        successProb <- sum(allData[[chr]]$inter)/allData[[chr]]$lengthOfChromosome#centeroftfbsinsideinterTADs[[chr]]
+        temp.bt <- binom.test(x = centeroftfbsinsideinterTADs[[chr]], n = length(centeroftfbsinsideinterTADsList[[chr]]), p = successProb, alternative = "two.sided")
+        sign = 1
+        if(temp.bt$estimate < temp.bt$null){
+            sign = -1
+        }
+        tfbsBinomTest[[files]][[chr]] <- -sign * log10(temp.bt$p.value)
+    }
+
+    finalResults[[files]] <- unlist(tfbsBinomTest[[files]])
+    
 }
-
-finalResults
-
+dev.off()
 
 #loop to exclude the datasets which do not contain information for all the chromosomes of the mouse (19 + X = 20)
 cleanResults <- list()
 for(files in fileList)
 {
-  if( length(finalResults[[files]]) != length(chrs) ){
-    next
-}
- cleanResults[[files]] <- finalResults[[files]] 
+    if( length(finalResults[[files]]) != length(chrs) ){
+        next
+    }
+  cleanResults[[files]] <- finalResults[[files]] 
 }
 
-cleanResults
+length(cleanResults)
 
 #command to check if there is any Inf in the unlisted cleanResults
-is.infinite(unlist(cleanResults))
+if( sum(is.infinite(unlist(cleanResults))) > 0 ){
+    stop("SOMETHING IS WRONG... CHECK IT")
+}
 
 #command to put unlisted cleanResults in a matrix in order to make a heatmap
 matrix.1=matrix(unlist(cleanResults), ncol=length(chrs), byrow=TRUE)
-matrix.1
 
 #command to change every Inf elements in 0 in cleanResults
 matrix.1[is.infinite(matrix.1)] <- 0
@@ -485,31 +493,34 @@ matrix.1[is.infinite(matrix.1)] <- 0
 #command to set the chromosome names as column names
 colnames(matrix.1) <- chrs
 
-#command to load the gplots
+#command to create and modify the heatmap, in terms of colors, breaks and names. Modify names with the gsub.With gsub you can cut the names in different motifs.
+offset <- 40
+matrixHeatmap <- matrix.1
+matrixHeatmap[matrixHeatmap > 0] <- matrixHeatmap[matrixHeatmap > 0] + offset
+matrixHeatmap[matrixHeatmap < 0] <- matrixHeatmap[matrixHeatmap < 0] - offset
 
-max(matrix.1)
-
-matrix.1
-
-#command to create and modify the heatmap, in terms of colors, breaks and names. Modify names with the gsub.With gsub you can cut the names in different motifs. 
+pdf("heatmap_tfbs_interTAD.pdf")
 colors=c(seq(-110, -60.01, length=100), seq(-60, -42.01, length=100), seq(-42, -40, length=100), seq(40, 42, length=100), seq(42.01, 60, length=100), seq(60.01, 110, length=100))
-mypallete=colorRampPalette(c("purple", "blue", "darkgray", "gray", "pink", "red")) (n=599)
+mypallete=colorRampPalette(c("blue", "lightblue", "darkgray", "gray", "pink", "red")) (n=599)
 newNames<-gsub("spp.idrOptimal.bf.mm9.wgEncode[A-Z][a-z0-9]+[A-Z][a-z0-9]+[A-Z][a-z0-9]+([A-Z][a-z0-9]+).+", x = names(cleanResults), replacement = "\\1")
-newNames
 row.names(matrix.1) <- newNames
-heatmap.2(matrix.1, cexRow =.3, srtCol=50, xlab="Chromosomes", ylab="Transcription Factors", 
+row.names(matrixHeatmap) <- newNames
+heatmap.2(matrixHeatmap, cexRow =.3, srtCol=50, xlab="Chromosomes", ylab="Transcription Factors", 
             density.info ="none", trace="none", col=mypallete, symm=F, symkey=F, symbreaks=F, breaks = colors,
-            hclustfun = function(x) hclust(x, method="complete"))
+            hclustfun = function(x) hclust(x, method="complete"), key=TRUE)
+dev.off()
+
 
 #pca analysis for the datasets
 mypca<-prcomp(matrix.1)
-
-#command to plot two pcas from the matrix.1
+command to plot two pcas from the matrix.1
 x<-1
 y<-2
+pdf("pca_tfbs_interTADs.pdf")
 plot(mypca$x[,x], mypca$x[,y], col="white")
 mycolour=c(rep("red", 4),rep("blue", 131))
 text(mypca$x[,x], mypca$x[,y], labels=1:135, cex=0.4, col=mycolour)
+dev.off()
 
 #characteristics from the summary of the pcas
 summary(mypca)
@@ -517,16 +528,11 @@ summary(mypca)
 #command to find where the transcription factor datasheets are located  
 newNames[c(47,48,111,113,67,112,113,100,101,118,69,106,54,90,58)]
 
-
-
-
-
 #function to find which points are found inside TADs
 insideTAD=function(point, chr)
 {
   starts=allData[[chr]]$starts
   ends=allData[[chr]]$ends
-  
   isinside.1=(point >= starts & point <= ends)
   return(sum(isinside.1))
 }
@@ -536,83 +542,73 @@ proportionofTADs=list()
 for (chr in chrs)
 {
   sumTADs=sum(allData[[chr]]$length)
-  
   proportionofTADs[[chr]]=sumTADs/allData[[chr]]$lengthOfChromosome
 }
 
 #loop to find which random points are found inside TADs in each chromosome
-insideTADList=list()
-for(chr in chrs)
-{
-  randomPoints.1 <- floor(runif(NRANDOM, min(allData[[chr]]$starts), max(allData[[chr]]$ends))) 
-  insideTADList[[chr]] = sapply(randomPoints.1, insideTAD, chr)
-}
+##insideTADList=list()
+##for(chr in chrs)
+##{
+##  randomPoints.1 <- floor(runif(NRANDOM, min(allData[[chr]]$starts), max(allData[[chr]]$ends))) 
+##  insideTADList[[chr]] = sapply(randomPoints.1, insideTAD, chr)
+##}
 
-insideTADList
+##loop to find the percentage of the random points which are found inside interTADs in each chromosome
+##insideTADPercentage=list()
+##for(chr in chrs)
+##{
+##  insideTADPercentage[[chr]]= sum(insideTADList[[chr]])/length(insideTADList[[chr]])
+##}
 
-#loop to find the percentage of the random points which are found inside interTADs in each chromosome
-insideTADPercentage=list()
-for(chr in chrs)
-{
-  insideTADPercentage[[chr]]= sum(insideTADList[[chr]])/length(insideTADList[[chr]])
-}
-
-insideTADPercentage
+##insideTADPercentage
 
 #loop to find which random points are found inside TADs
-randomPointsinsideTADs=list()
-for (chr in chrs)
-{
-  randomPointsinsideTADs[[chr]]=sum(insideTADList[[chr]])
-}
+## randomPointsinsideTADs=list()
+## for (chr in chrs)
+## {
+##   randomPointsinsideTADs[[chr]]=sum(insideTADList[[chr]])
+## }
 
-randomPointsinsideTADs
+## randomPointsinsideTADs
 
-#command to make a list of files in this working directory
-fileList=list.files(path = "~/Desktop/HiC Analysis/narrowPeakFiles")
-fileList
 
-#commands to remove and to create dataset
-rm(dataset)
-exists("dataset")
+####
+# STAMATISAME EDW 1/7/2016
+#####
 
-#set a new working directory
-pathfile<-"/home/eliasprim/Desktop/HiC Analysis/narrowPeakFiles/"
 
 #loop for the analysis of the files in the fileList, with commands that are found inside the loop
 files0<-""
 finalResults.1=list()
-
-
-locationsTFBSCenters <- list()
+locationsTFBSCenters <- list(
 for (files in fileList)
 {
-  dataset <- read.table(paste(pathfile, files, sep=""), header=TRUE, sep="\t")
+    dataset <- try(read.table(paste(filelistPath, files, sep=""), header=TRUE, sep="\t"))
+    if ( inherits(dataset, 'try-error') ){
+        next
+    }
+
+    ##command to name the chromosomes
+    mychr <- unique(dataset[,1])
+    
+    ##command to take the names of the chromosomes from the intersect of two sets
+    chrs <- intersect(TADchrs, mychr)
+    ##command to limit the dimensions of your dataset
+    datamatrix.1=dataset[, 1:3]
+    
+    ##command to find the center of the transcription factor binding sites are found inside TADs and 
+    ##a loop to find which center of transcription factor binding sites are found inside TADs for each chromosome
+    centeroftfbsinsideTADsList=list()
+    centeroftfbsCHR <- list()
+    for (chr in chrs)
+        {
+            indexForChromosome <- which(dataset[,1] == chr)
+            centeroftfbs=(dataset[indexForChromosome, 2] + dataset[indexForChromosome, 3])/2
+            centeroftfbsCHR[[chr]] <- centeroftfbs
+            centeroftfbsinsideTADsList[[chr]]=sapply(centeroftfbs, insideTAD, chr)
+        }
   
-  #command to name the chromosomes
-  mychr <- unique(dataset[,1])
-  mychr
-  
-  #command to take the names of the chromosomes from the intersect of two sets
-  chrs <- intersect(TADchrs, mychr)
-  chrs
-  
-  #command to limit the dimensions of your dataset
-  datamatrix.1=dataset[, 1:3]
-  
-  #command to find the center of the transcription factor binding sites are found inside TADs and 
-  #a loop to find which center of transcription factor binding sites are found inside TADs for each chromosome
-  centeroftfbsinsideTADsList=list()
-  centeroftfbsCHR <- list()
-  for (chr in chrs)
-  {
-    indexForChromosome <- which(dataset[,1] == chr)
-    centeroftfbs=(dataset[indexForChromosome, 2] + dataset[indexForChromosome, 3])/2
-    centeroftfbsCHR[[chr]] <- centeroftfbs
-    centeroftfbsinsideTADsList[[chr]]=sapply(centeroftfbs, insideTAD, chr)
-  }
-  
-  centeroftfbsinsideTADsList
+    centeroftfbsinsideTADsList
   
   #loop to find the percentage of the center of the transcription factor binding sites which are found inside TADs for each chromosome
   centeroftfbsinsideTADsPercentage=list()
@@ -1117,7 +1113,7 @@ finalResults.3=list()
 locationsHistonesCenters <- list()
 for (files in fileList)
 {
-  dataset <- read.table(paste(pathfile, files, sep=""), header=TRUE, sep="\t")
+    dataset <- read.table(paste(pathfile, files, sep=""), header=TRUE, sep="\t")
   
   #command to name the chromosomes
   mychr <- unique(dataset[,1])
