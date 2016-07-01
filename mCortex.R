@@ -1,7 +1,4 @@
 rm(list=ls())
-
-
-
 ##source("https://bioconductor.org/biocLite.R")
 #command to load the ChIPseeker and gplots packages
 library(ChIPseeker)
@@ -18,9 +15,9 @@ args = commandArgs(trailingOnly=TRUE)
 #set the number of the random points
 NRANDOM <- 100000
 chrinfo <- read.table("chrinfo.txt", row.names = 1)
-pathregions <- "/home/elias/hic/hic/cortex/combined/"
+pathregions <- "./cortex/combined/"
 fileregions <- paste(pathregions, "total.combined.domain", sep="")
-filelistPath <- "/home/elias/hic/hic/narrowPeakFiles/"
+filelistPath <- "./narrowPeakFiles/"
 
 
 if( length(args) > 0 ){
@@ -38,16 +35,15 @@ if( length(args) > 2 ){
 raw.dataset=read.table(fileregions, na.strings="null")
 
 txdb=TxDb.Mmusculus.UCSC.mm9.knownGene
-#setwd("/home/eliasprim/Desktop/HiC Analysis/Pavlidis Rotation/Project/TADs and Inter-TADs RStudio Datasets/Mouse/Cortex")
 
-#chromosome names column=as characters 
+##chromosome names column=as characters 
 TADchrs <- as.character(unique(raw.dataset[,1]))
 chrs <- TADchrs
 
-#all data in a list
+##all data in a list
 allData <- list()
 
-#loop for the chromosome analysis below (tadStarts, tadEnds, tadLength, interTAD, interTADcenter)
+##loop for the chromosome analysis below (tadStarts, tadEnds, tadLength, interTAD, interTADcenter)
 for( i in 1:length(chrs))
 {
   chrData <- list()
@@ -81,8 +77,11 @@ for( i in 1:length(chrs))
   allData[[chr]] <- chrData
 }
 
-#cumulate data  in a list 
+
+##cumulate data  in a list 
 cumData <- list()
+
+
 
 #loop for the analysis below,all data are cumulative (e.g interTADs for all chromosomes) 
 for(el in names(allData$chr1))
@@ -298,15 +297,6 @@ barplot(propmatrix, beside=TRUE, main="Proportion of the TSS Inside the InterTAD
 legend("topright", legend=c("TSS proportion in interTAD", "interTAD propotion"), col=c("black", "gray"), pch=15)
 dev.off()
 
-#loop to find which random points are found inside interTADs
-##randomPointsinsideinterTADs=list()
-##for (chr in chrs)
-##{
-##    randomPointsinsideinterTADs[[chr]]=sum(insideinterTADList[[chr]])
-#}
-
-##randomPointsinsideinterTADs
-
 #loop to find which promoters are found inside interTADs
 promotersinsideinterTADs=list()
 for (chr in chrs)
@@ -334,48 +324,11 @@ barplot(unlist(tssBinomTest), las=2, col=col, ylab="-log(pvalue[binom.test])", x
 legend("topright", legend=c("More in interTADS than expected", "Less in interTADs than expected"), col=c("red", "blue"), pch=15)
 abline(h = 0)
 
-##promotersinsideinterTADs
-
-#loop to make a matrix for the fisher's test with the promoters which are found inside interTADs, the random points inside the interTADs,
-#the promoters outside the interTADs and the random points outside the interTADs 
-## insideinterTADregions=list()
-## for (chr in chrs)
-## {
-##   insideinterTADregions[[chr]]=matrix(c( promotersinsideinterTADs[[chr]], 
-##                                          randomPointsinsideinterTADs[[chr]], 
-##                                          length(promotersinsideinterTADsList[[chr]]) - promotersinsideinterTADs[[chr]] , 
-##                                          length(insideinterTADList[[chr]]) - randomPointsinsideinterTADs[[chr]] ), nrow=2, byrow=FALSE)
-## }
-
-## insideinterTADregions
-
-#loop for the results of the fisher's test for each chromosome. 
-#Fisher exact test is a statistical significance test used in the analysis of contingency tables.
-## fisher.results=list()
-## for( chr in chrs)
-## {
-##   fisher.results[[chr]] <- fisher.test(insideinterTADregions[[chr]])$p.value
-## }
-
-## #command to plot the p values of the fisher exact test and to draw a hoizontal line in p=0.05 or log10(5)-2
-## plot(log10(unlist(fisher.results)))
-## abline(h=log10(5)-2, col="red")
-
-
-#loop to find which random points are found inside interTADs
-## randomPointsinsideinterTADs=list()
-## for (chr in chrs)
-## {
-##   randomPointsinsideinterTADs[[chr]]=sum(insideinterTADList[[chr]])
-## }
-
-## randomPointsinsideinterTADs
-
 #command to make a list of files in this working directory
 fileList=list.files(path = filelistPath)
 
 #loop for the analysis of the files in the fileList, with commands that are found inside the loop
-files0<-""
+
 finalResults=list()
 tfbsBinomTest <- list()
 pdf("barplot_tfbs_vsInterTADProportion.pdf")
